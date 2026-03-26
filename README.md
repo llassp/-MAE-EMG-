@@ -1,6 +1,7 @@
 # MAE-EMG 
 
 本项目实现了一个基于 Masked Autoencoders (MAE) 的肌电信号 (EMG) 处理与分析框架。项目包含了自监督预训练 (Pre-training) 以及下游分类任务 (Downstream Classification) 的完整代码，旨在探索自监督学习在时间序列/生物电信号上的应用。
+并在kaggle公开数据集（https://www.kaggle.com/datasets/theseus200719/physiomio-16-gestures-64-channel-emg-dataset）上进行识别取得了97+%的正确率。
 
 ## 📁 目录结构
 
