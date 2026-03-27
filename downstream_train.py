@@ -6,10 +6,11 @@ import os
 import logging
 import json
 import math
+import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import confusion_matrix, classification_report
 
-from model import MAEModel, DownstreamLSTM
+from model import MAEModel, MAEModelWithInterLayerAttention, DownstreamLSTM, DownstreamTransformer
 from dataset import EMGDownstreamDataset
 from visualize import confusion_matrix_visualization, training_curve_visualization
 
@@ -156,8 +157,6 @@ def save_checkpoint(model, optimizer, epoch, val_acc, checkpoint_dir, filename):
     return checkpoint_path
 
 
-import numpy as np
-
 
 def main():
     parser = argparse.ArgumentParser(description='EMG Downstream Classification')
@@ -175,6 +174,10 @@ def main():
     parser.add_argument('--warmup_ratio', type=float, default=0.05, help='Warmup ratio')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use')
+    parser.add_argument('--model_type', type=str, default='lstm', choices=['lstm', 'transformer'],
+                        help='Downstream temporal model type: lstm (default) or transformer')
+    parser.add_argument('--encoder_type', type=str, default='mae', choices=['mae', 'mae_ila'],
+                        help='Encoder type: mae (default) or mae_ila (MAE with Inter-Layer Attention)')
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -188,7 +191,11 @@ def main():
     setup_logging(args.log_dir)
 
     logging.info('Loading pretrained model...')
-    pretrain_model = MAEModel()
+    if args.encoder_type == 'mae_ila':
+        logging.info('Using MAE with Inter-Layer Attention encoder')
+        pretrain_model = MAEModelWithInterLayerAttention()
+    else:
+        pretrain_model = MAEModel()
     if os.path.exists(args.pretrain_ckpt):
         ckpt = torch.load(args.pretrain_ckpt, weights_only=False)
         pretrain_model.load_state_dict(ckpt['model_state_dict'])
@@ -208,16 +215,23 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
 
-    model = DownstreamLSTM(pretrain_model, num_classes=16, freeze_encoder=True).to(device)
+    if args.model_type == 'transformer':
+        logging.info('Using Transformer temporal model')
+        model = DownstreamTransformer(pretrain_model, num_classes=16, freeze_encoder=True).to(device)
+    else:
+        logging.info('Using LSTM temporal model')
+        model = DownstreamLSTM(pretrain_model, num_classes=16, freeze_encoder=True).to(device)
 
     head_params = sum(p.numel() for p in model.classifier.parameters())
-    lstm_params = sum(p.numel() for p in model.lstm.parameters())
+    temporal_params = (sum(p.numel() for p in model.temporal_encoder.parameters())
+                       if args.model_type == 'transformer'
+                       else sum(p.numel() for p in model.lstm.parameters()))
     pos_params = model.temporal_pos_embed.numel()
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     logging.info(f'Encoder params: {encoder_params:,}')
-    logging.info(f'LSTM params: {lstm_params:,}')
+    logging.info(f'Temporal model params: {temporal_params:,}')
     logging.info(f'Pos embed params: {pos_params:,}')
     logging.info(f'Classifier params: {head_params:,}')
     logging.info(f'Total params: {total_params:,}')
@@ -233,8 +247,11 @@ def main():
     logging.info('=' * 60)
 
     model.set_encoder_grad(freeze=True)
+    # Include all non-encoder trainable params: LSTM, temporal pos embed, and classifier
+    head_and_lstm_params = [p for n, p in model.named_parameters()
+                           if 'pretrain_model' not in n and p.requires_grad]
     optimizer_p1 = torch.optim.AdamW(
-        model.classifier.parameters(),
+        head_and_lstm_params,
         lr=args.phase1_lr,
         weight_decay=0.01
     )
