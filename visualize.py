@@ -160,7 +160,6 @@ def tsne_visualization(model, data_dir, n_per_class=100, save_path='logs/tsne.pn
                 images.append(rgb_float)
             images = np.array(images)
             images = images.transpose(0, 3, 1, 2)
-            images = images / 255.0
             return images
 
         filtered_data = bandpass_filter(data)

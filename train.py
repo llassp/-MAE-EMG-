@@ -116,6 +116,8 @@ def main():
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use')
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+    parser.add_argument('--encoder_type', type=str, default='mae', choices=['mae', 'mae_ila'],
+                        help='Encoder type: mae (default) or mae_ila (MAE with Inter-Layer Attention)')
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -152,8 +154,12 @@ def main():
         'dropout': 0.1
     }
 
-    from model import MAEModel
-    model = MAEModel(**config).to(device)
+    from model import MAEModel, MAEModelWithInterLayerAttention
+    if args.encoder_type == 'mae_ila':
+        logging.info('Using MAE with Inter-Layer Attention')
+        model = MAEModelWithInterLayerAttention(**config).to(device)
+    else:
+        model = MAEModel(**config).to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     logging.info(f'Total parameters: {total_params:,}')
